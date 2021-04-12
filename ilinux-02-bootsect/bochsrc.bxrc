@@ -1,0 +1,33 @@
+###############################################################
+# bochsrc.bxrc file for ilinux.
+###############################################################
+
+# how much memory the emulated machine will have
+megs: 32
+
+# filename of ROM images, 这里可能需要根据本机进行修改
+romimage: file=$BXSHARE/BIOS-bochs-latest
+vgaromimage: file=$BXSHARE/VGABIOS-lgpl-latest
+
+# what disk images will be used
+# 这里配置我们使用到的镜像文件
+floppya: 1_44=boot.bin, status=inserted
+
+# choose the boot disk.
+boot: a
+
+# where do we send log messages?
+log: log/bochsout.txt
+
+# disable the mouse, since ilinux is text only
+mouse: enabled=0
+
+# enable key mapping, using US layout as default.
+# 这里也可能需要根据本机进行相应的修改
+keyboard_mapping: enabled=1, map=$BXSHARE/keymaps/x11-pc-us.map
+
+# 断点设置
+magic_break: enabled=1
+
+# GUI debug, 开启图形化调试界面
+display_library: x, options=gui_debug
