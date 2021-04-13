@@ -16,4 +16,24 @@ BS_Reserved1    DB 0                    ; 未使用
 BS_BootSig      DB 0x29                 ; 扩展引导标记（29h）
 BS_VolID        DD 0                    ; 卷序列号
 BS_VolLab       DB 'snowflake01'		; 卷标，必须11个字节
-BS_FileSysType  DB 'FAT12'              ; 文件系统类型，必须8个字节
+BS_FileSysType  DB 'FAT12   '           ; 文件系统类型，必须8个字节
+
+; 加载的 LOADER.bin 文件的名词
+LOADER_FILE_NAME                db "LOADER  BIN", 0   
+; LOADER.bin 文件加载到内存的基址
+LOADER_FILE_BASE          		equ 0x9000
+; LOADER.bin 
+LOADER_FILE_OFFSET        		equ 0x0100
+
+; FAT12 根目录占用扇区数目
+FAT12_ROOT_DIR_SECTORS        	equ 14
+; FAT12 根目录区的起始扇区号
+FAT12_SECTOR_NUM_OF_ROOT_DIR    equ 19
+; FAT12 文件系统 FAT1 表的起始扇区
+FAT12_SECTOR_NO_OF_FAT1         equ 1
+
+FAT12_DELTA_SECTOR_NO           equ 17
+
+W_ROOT_DIR_SIZE_FOR_LOOP        dw FAT12_ROOT_DIR_SECTORS
+W_SECTOR_NO                     dw 0
+B_ODD                           db 0

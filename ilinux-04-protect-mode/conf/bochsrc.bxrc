@@ -11,7 +11,7 @@ vgaromimage: file=$BXSHARE/VGABIOS-lgpl-latest
 
 # what disk images will be used
 # 这里配置我们使用到的镜像文件
-floppya: 1_44=boot.bin, status=inserted
+floppya: 1_44=ilinux.img, status=inserted
 
 # choose the boot disk.
 boot: a
