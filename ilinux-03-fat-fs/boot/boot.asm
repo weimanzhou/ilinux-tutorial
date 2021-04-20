@@ -11,7 +11,6 @@ nop
 
 %include "fat12hdr.inc"
 
-
 ; 栈顶地址
 STACK_TOP                      equ 0x7c00
 

@@ -1,4 +1,4 @@
-# 04文件系统
+# 03文件系统
 
 [toc]
 
@@ -60,8 +60,7 @@ $ tree .
 .
 ├── boot					; 用来存储启动相关的文件
 │   ├── include				; 用来存储启动相关文件所需要的头文件
-│   │   ├── fat12hdr.inc
-│   │   └── pm.inc
+│   │   └── fat12hdr.inc
 │   ├── boot.asm			; 启动扇区代码
 │   └── loader.asm			; 用来测试的代码文件（后续用来加载内核代码）
 ├── conf					; 存储一些配置文件
@@ -99,11 +98,8 @@ BS_BootSig      DB 0x29                 ; 扩展引导标记（29h）
 BS_VolID        DD 0                    ; 卷序列号
 BS_VolLab       DB 'snowflake01'		; 卷标，必须11个字节
 BS_FileSysType  DB 'FAT12'              ; 文件系统类型，必须8个字节
-```
 
-为了开发的更加便利，我们创建一个`boot/include/pm.inc`文件并中其中添加一些常量
 
-```assembly
 ; 加载的 LOADER.bin 文件的名词
 LOADER_FILE_NAME                db "LOADER  BIN", 0   
 ; LOADER.bin 文件加载到内存的基址
@@ -136,14 +132,15 @@ nop								; 根据 fat12 所需要参数的要求，我们首先要有一个跳
 								; nop 空指令，接着跟上 fat12hdr.inc 中常量，这就表明我们引入了
 %include "fat12hdr.inc"			; fat12 文件系统
 
-%include "pm.inc"
+; 栈顶地址
+STACK_TOP                     	equ 0x7c00
 
 LABEL_START:
     mov ax, cs
     mov ds, ax
     mov	es, ax
     mov ss, ax
-    mov sp, STACK_BASE
+    mov sp, STACK_TOP
 
     ; 清屏幕操作(scroll up window.)
 	mov	ax, 0600h		; AH = 6,  AL = 0h
@@ -415,7 +412,7 @@ The following line should appear in your bochsrc:
 # 编译中间目录
 
 # bochs 配置文件
-BOCHS_CONFIG    = bochsrc.bxrc
+BOCHS_CONFIG    = conf/bochsrc.bxrc
 BOCHS_ARGA		= -f $(BOCHS_CONFIG)
 
 FD 				= ilinux.img

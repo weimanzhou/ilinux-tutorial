@@ -87,7 +87,8 @@ START:
 	mov cr0, eax
 
 	; 真正进入保护模式
-	jmp dword SELECTOR_CODE32:0             ; 执行这一句会把SELECT_CODE32
+	jmp dword SELECTOR_CODE32:0           
+											; 执行这一句会把SELECT_CODE32
 											; 装入CS,并跳转到SELECTOR_CODE32:0
 
 MESSAGE_LENGTH		equ 11

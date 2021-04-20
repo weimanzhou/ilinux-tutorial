@@ -1,67 +1,30 @@
-# 04文件系统
+# 04保护模式
 
 [toc]
 
-在上一个实验中，我们已经写了一个启动扇区，但是只有512字节的空间无法满足我们写一个操作系统的需求，为了这个目标，下面我们来为操作系统添加一个文件系统吧。
+## 预准备
 
-这次我们要使用到的是FAT12文件系统，下面我们来使用这个文件系统吧，在具体使用这个文件系统之前，我们先简单的介绍一下这个文件系统。
+在上一节中，我们成功在我们的操作系统中添加了`FAT12`文件系统，在这一节中，我们将我们的操作从**实模式**切换到**保护模式**。
 
-## FAT12文件系统
+由于这一次的实验是在上一次的实验的基础上添加的，所以我们直接复制上次的文件，然后在此基础上进行添加休息。
 
-### 文件系统简介
-
-FAT12文件系统是指：在磁盘上规定一种特定的存储格式，这种存储格式高效方便，功能强大，因此形成了统一的规定。
-
-### 文件系统基础知识
-
-具体来说FAT12文件系统为1.44M的软盘设计。1.44M的软盘有2880个扇区，一个扇区有512个字节；那么FAT12文件系统的管理的空间大小就是2880 * 512 = 1474560个字节
-
-实际的扇区是在磁盘上，但是我们可以把所有的储存空间看作是一个很大的数组，把扇区当作是连续排列的。扇区当作数组看待时，称为逻辑扇区，从0开始编号。
-
-### FAT12文件系统结构
-
-首先FAT12文件系统将2880个扇区分成5个部分：**MBR引导记录、FAT1表、FAT2表、根目录、数据区**
-
-![fat12](https://gitee.com/wei_manzhou/blog_picture/raw/master/20210413141400.png)
-
-### MBR引导记录
-
-MBR引导记录有512个字节，最后两个字节是0x55和0xAA；MBR记录的所有信息如下
-
-MBR引导记录就是BOIS读入内存的一个扇区，可以看到第一条指令就是汇编语言x86中的跳转指令，这条指令将跳转到后面的汇编代码区域进行执行。由于我们在做模拟FAT12文件系统程序时不需要考虑后面一段代码，因此后面的汇编代码通常为0。
-
-真正要注意的地方就是前面的一些FAT12文件的参数。之后为了方便说明统一用默认值考虑FAT12文件系统，在DOS系统中这些值基本上也是固定的。
-
-### FAT1、FAT2表
-
-这两个表完全相同，FAT2表存在的目的就是为了修复FAT1表。因此在实际操作的过程中可以将FAT1表在关机的时候赋值给FAT2即可。以后再说FAT表时，默认为FAT1表
-
-### 根目录区的每一个条目
-
-根目录区来存储每一个文件的简单信息，类似于目录的功能，后续我们查找文件的时候需要利用到这个地方。
-
-![img](https://img-blog.csdnimg.cn/20190315171036393.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzM5NjU0MTI3,size_16,color_FFFFFF,t_70)
-
-## 代码示例
-
-首先我们新创建一个文件夹用来完成这次的实验
+首先复制文件
 
 ```bash
 $ pwd
 /root/os/ilinux/
-$ mkdir ilinux-03-fat-fs
-$ cd ilinux-03-fat-fs
+$ cp ilinux-03-fat-fs ilinux-04-protect-mode -r
 ```
 
-为了组织我们的代码，我们建立了如下的目录结构
+复制后的文件具有如下的项目结构
 
 ```bash
+$ cd ilinux-04-protect-mode
 $ tree .
 .
 ├── boot					; 用来存储启动相关的文件
 │   ├── include				; 用来存储启动相关文件所需要的头文件
-│   │   ├── fat12hdr.inc
-│   │   └── pm.inc
+│   │   └── fat12hdr.inc
 │   ├── boot.asm			; 启动扇区代码
 │   └── loader.asm			; 用来测试的代码文件（后续用来加载内核代码）
 ├── conf					; 存储一些配置文件
@@ -75,268 +38,100 @@ $ tree .
         └── loader.bin		; 编译后的 loader 文件
 ```
 
-我们可以看到上面多了很多我们不知道的文件，仿佛一些子变的很难，其实是没有的，只是为了后续我们组织成这样，下面我们来一步一步实现上面的结构吧。
-
-第一步，我们先创建一个`boot/include/fat12hdr.inc`文件用来定义文件系统需要的一些常量，内容如下。
+接着我们创建`boot/include/pm.inc`文件，保护模式所需要常量
 
 ```assembly
-BS_OEMName      DB '---XX---'   		; OEM string, 必须是 8 个字节
-BPB_BytsPerSec  DW 0x0200               ; 每扇区字节数
-BPB_SecPerClus  DB 0x01                 ; 每簇多少个扇区
-BPB_RsvdSecCnt  DW 0x01                 ; Boot 记录占用多少扇区
-BPB_NumFATs     DB 0x02                 ; 共有多少 FAT 表
-BPB_RootEntCnt  DW 0xe0                 ; 根目录文件最大数
-BPB_TotSec16    DW 0x0b40               ; 逻辑扇区总数
-BPB_Media       DB 0xF0                 ; 媒体描述符
-BPB_FATSz16     DW 0x09                 ; 每FAT扇区数
-BPB_SecPerTrk   DW 0x12                 ; 每磁道扇区数
-BPB_NumHeads    DW 0x02                 ; 磁头数（面数）
-BPB_HiddSec     DD 0                    ; 隐藏扇区数
-BPB_TotSec32    DD 0                    ; 如果 wTotalSectorCount 是 0 由这个值记录扇区数
-BS_DrvNum       DB 0                    ; 中断13的驱动器号
-BS_Reserved1    DB 0                    ; 未使用
-BS_BootSig      DB 0x29                 ; 扩展引导标记（29h）
-BS_VolID        DD 0                    ; 卷序列号
-BS_VolLab       DB 'snowflake01'		; 卷标，必须11个字节
-BS_FileSysType  DB 'FAT12'              ; 文件系统类型，必须8个字节
+; 描述符
+; usage: desciptor base, limit, attr
+;                base:  dd
+;                limit: dd(low 20 bits available)
+;                attr:  dw(lower 4 bits of higher byte are always 0)
+%macro descriptor 3
+        dw %2 & 0xFFFF          ; 段界限 1                      (2 字节)
+        dw %1 & 0xFFFF          ; 段基址 1                      (2 字节)
+        db (%1 >> 16) & 0xFF    ; 段基址 2                      (1 字节)
+        dw ((%2 >> 8) & 0x0F00) | (%3 & 0xF0FF)
+                                ; 属性1 + 段界限2 + 属性2        (2 字节)
+        db (%1 >> 24) & 0xFF    ; 段基址 3                      (1 字节)
+%endmacro ; 共8字节
+
+; 描述符类型
+DA_32       EQU 4000h   ; 32 位段
+DA_LIMIT_4K EQU 8000h   ; 粒度4K
+
+DA_DPL0     EQU   00h   ; DPL = 0
+DA_DPL1     EQU   20h   ; DPL = 1
+DA_DPL2     EQU   40h   ; DPL = 2
+DA_DPL3     EQU   60h   ; DPL = 3
+
+; 存储段描述符类型
+DA_DR       EQU   90h   ; 存在的只读数据段类型值
+DA_DRW      EQU   92h   ; 存在的可读写数据段属性值
+DA_DRWA     EQU   93h   ; 存在的已访问可读写数据段类型值
+DA_C        EQU   98h   ; 存在的只执行代码段属性值
+DA_CR       EQU   9Ah   ; 存在的可执行可读代码段属性值
+DA_CCO      EQU   9Ch   ; 存在的只执行一致代码段属性值
+DA_CCOR     EQU   9Eh   ; 存在的可执行可读一致代码段属性值
+
+; 系统段描述符类型
+DA_LDT      EQU   82h   ; 局部描述符表段类型值
+DA_TaskGate EQU   85h   ; 任务门类型值
+DA_386TSS   EQU   89h   ; 可用 386 任务状态段类型值
+DA_386CGate EQU   8Ch   ; 386 调用门类型值
+DA_386IGate EQU   8Eh   ; 386 中断门类型值
+DA_386TGate EQU   8Fh   ; 386 陷阱门类型值
+
+; 选择子类型
+SA_RPL0     EQU 0       ; ┓
+SA_RPL1     EQU 1       ; ┣ RPL
+SA_RPL2     EQU 2       ; ┃
+SA_RPL3     EQU 3       ; ┛
+
+SA_TIG      EQU 0       ; ┓TI
+SA_TIL      EQU 4       ; ┛
+;----------------------------------------------------------------------------
 ```
 
-为了开发的更加便利，我们创建一个`boot/include/pm.inc`文件并中其中添加一些常量
+## 保护模式介绍
 
-```assembly
-; 加载的 LOADER.bin 文件的名词
-LOADER_FILE_NAME                db "LOADER  BIN", 0   
-; LOADER.bin 文件加载到内存的基址
-LOADER_FILE_BASE          		equ 0x9000
-; LOADER.bin 
-LOADER_FILE_OFFSET        		equ 0x0100
-
-; FAT12 根目录占用扇区数目
-FAT12_ROOT_DIR_SECTORS        	equ 14
-; FAT12 根目录区的起始扇区号
-FAT12_SECTOR_NUM_OF_ROOT_DIR    equ 19
-W_ROOT_DIR_SIZE_FOR_LOOP        dw FAT12_ROOT_DIR_SECTORS
-W_SECTOR_NO                     dw 0
-B_ODD                           db 0
-```
-
-然后我们在`boot/boot.asm`中编写如下的代码，并引入我们的文件系统（要注意代码中的注释）
-
-```assembly
-; define _BOOT_DEBUG_
-%ifdef _BOOT_DEBUG_
-        org 0x0100				; 调试状态，做成 .com 文件，可调试
-%else
-        org 0x7c00				; Boot 状态，BIOS将把 bootector
-								; 加载到 0:7c00 处并开始执行
-%endif
-
-jmp short LABEL_START			; 这里三行的结构一定要是这样
-nop								; 根据 fat12 所需要参数的要求，我们首先要有一个跳转指令，然后跟上一个
-								; nop 空指令，接着跟上 fat12hdr.inc 中常量，这就表明我们引入了
-%include "fat12hdr.inc"			; fat12 文件系统
-
-%include "pm.inc"
-
-LABEL_START:
-    mov ax, cs
-    mov ds, ax
-    mov	es, ax
-    mov ss, ax
-    mov sp, STACK_BASE
-
-    ; 清屏幕操作(scroll up window.)
-	mov	ax, 0600h		; AH = 6,  AL = 0h
-	mov	bx, 0700h		; 属性被用来在窗口底部写入空白行(BL = 07h)
-	mov	cx, 0			; 屏幕左上角: (0, 0)
-	mov	dx, 184fh		; 屏幕右下角: (80, 50)
-	int	10h				; int 10h
-
-	mov	dh, 0			; "booting.."
-	call FUN_DISP_STR	; 调用显示字符串函数
-
-    ; 进行磁盘复位
-    xor ah, ah
-    int 13h
-
-FUN_LOAD_LOADER_FILE:
-    ; 下面在A盘的根目录寻找loader.bin
-    mov word [W_SECTOR_NO], FAT12_SECTOR_NUM_OF_ROOT_DIR
-LABEL_SEARCH_IN_ROOT_DIR_BEGIN:
-    cmp word [W_ROOT_DIR_SIZE_FOR_LOOP], 0  ; 判断根目录区是否已经读完,
-    jz LABEL_NO_LOADERBIN                   ; 如果读完表示没有找到loader.bin
-    dec word [W_ROOT_DIR_SIZE_FOR_LOOP]
-
-
-	; 从第 ax 个sector开始，将 cl 个sector读入es:bx中
-    mov ax, LOADER_FILE_BASE				;
-    mov es, ax								; 设置缓冲区段地址 
-    mov bx, LOADER_FILE_OFFSET				; 设置缓冲区偏移地址
-    mov ax, [W_SECTOR_NO]					; 设置从第 ax 个扇区读取
-    mov cl, 1								; 读取扇区的个数
-    call FUN_READ_SECTOR					; 调用读取扇区
-
-	mov si, LOADER_FILE_NAME                ; ds:si -> "LOADER  BIN"
-    mov di, LOADER_FILE_OFFSET              ; es:di -> BaseOfLoader:0100 = BaseOfLoader*10h+100
-
-	cld
-   	mov dx, 10h
-
-LABEL_SEARCH_FOR_LOADERBIN:
-    cmp dx, 0
-
-    jz LABEL_GOTO_NEXT_SECTOR_IN_ROOT_DIR
-    dec dx
-    mov cx, 11
-LABEL_CMP_FILENAME:
-    cmp cx, 0
-    jz LABEL_FILENAME_FOUND
-    dec cx
-    lodsb
-    cmp al, byte [es:di]
-    jz LABEL_GO_ON
-    jmp LABEL_DIFFERENT
-
-LABEL_GO_ON:
-    inc di
-    jmp LABEL_CMP_FILENAME
-
-LABEL_DIFFERENT:
-    and di, 0xFFE0
-    add di, 0x20
-    mov si, LOADER_FILE_NAME
-    jmp LABEL_SEARCH_FOR_LOADERBIN
-
-LABEL_GOTO_NEXT_SECTOR_IN_ROOT_DIR:
-    add word [W_SECTOR_NO], 1
-    jmp LABEL_SEARCH_IN_ROOT_DIR_BEGIN
-
-LABEL_NO_LOADERBIN:
-    mov dh, 2
-    call FUN_DISP_STR
-
-%ifdef _BOOT_DEBUG_
-    mov ax, 0x4c00
-    int 21h
-%else
-    jmp $
-%endif
-
-LABEL_FILENAME_FOUND:
-	mov dh, 3
-	call FUN_DISP_STR
-
-    jmp $                       ; 跳转到当前地址，实现循环
-
-; ============================================================================
-; 
-; description:	从第 ax 个sector开始，将 el 个sector读入es:bx中
-; 
-; params:		al	读取的扇区数目
-;				ch	柱面号
-;				cl	扇区号
-;				dh	磁头号
-;				dl	驱动号(0表示A盘)
-;				es:bx	数据缓冲区
-;
-; return:		cf	错误会被置位，成功会被清零
-;				ah	成功会被置0
-;				al 传输的扇区数目
-; notes:		每一个扇区有 512 字节
-;
-; 2 * 80 * 18 * 512 = 1.44MB
-;
-; BPB_SecPerTrk
-;
-; 我们能够取得要读取的数据的扇区号：ax，
-; cl = ax % BPB_SecPerTrk
-; ch = (ax / BPB_SecPerTrk) >> 1
-; dh = (ax / BPB_SecPerTrk) & 1
-; ============================================================================
-FUN_READ_SECTOR:          		
-    push cx						; 保存要读取的扇区数目
-    push bx                 	; 保存bx
-    mov bl, [BPB_SecPerTrk]		; b1: 除数
-    div bl                  	; al = ax / BPB_SecPerTrk; ah = ax % BPB_SecPerTrk(这里我们取到余数，也就是扇区号)
-    inc ah                  	; 由于扇区是从1开始计数的，所以要给ah加1
-    mov cl, ah              	; cl <- 起始扇区号
-    mov dh, al              	; dh <- al
-	and dh, 1					; dh & 1 = 磁头号
-    shr al, 1               	; al >> 1 (其实是 y / BPB_NUM_HEADS),这里
-                              	; BPB_NUM_HEADS=2
-    mov ch, al              	; ch <- 柱面号
-    ; and dh, 1               	; dh & 1 = 磁头号
-    pop bx                  	; 恢复bx
-    ; 至此,*柱面号,起始扇区,磁头号*全部得到
-    mov dl, [BS_DrvNum]    	; 驱动器号(0表示A盘)
-
-    pop ax						; 取出要读取的扇区数目，我们只需要al即可，不过下一步的mov指令能够设置ah
-								; 读 al 个扇区
-.GO_ON_READING:
-    mov ah, 2         			; 读
-    int 13h
-    jc .GO_ON_READING			; 如果读取错误,CF会被置1,这时不停的读,直到
-								; 正确为止
-    ret
-
-FUN_DISP_STR:
-    mov ax, MESSAGE_LENGTH
-    mul dh
-    add ax, BOOT_MESSAGE
-    mov bp, ax
-    mov ax, ds
-	mov	es, ax
-    mov cx, MESSAGE_LENGTH
-    mov ax, 0x1301
-    mov bx, 0x0007
-    mov dl, 0
-    int 10h
-    ret
-
-; 为简化代码,下面每个字符串的长度均为MESSAGE_LENGTH
-MESSAGE_LENGTH	         		equ 9
-BOOT_MESSAGE            		db "booting.."
-MESSAGE1                        db "ready...."
-MESSAGE2                        db "no loader"
-MESSAGE3						db "founded.."
-
-; ============================================================================
-; time n m
-;       n: 重复多少次
-;       m: 重复的代码
-;
-; $      : 当前地址
-; $$ : 代表上一个代码的地址减去起始地址
-; ============================================================================
-times 510-($-$$) db 0   ; 填充 0
-dw 0xaa55                               ; 可引导扇区标志,必须是 0xaa55,不然bios无法识别
-```
-
-修改后的`boot.asm`文件如上，下面我们进行编译。
-
-为了能够编译文件，我们这里需要创建一个`Makefile`文件来定义编译规则，`Makefile`内容如下
-
-```makefile
-
-```
-
-
-
-首先我们创建一个`loader.asm`文件，具有输出字符串的功能，内容如下
+在详细解释保护模式之前，我们先看一段代码吧（这段代码为`loader.asm`中的代码），然后顺着这段代码，我们来解释每一个新知识。
 
 ```assembly
 org	0100h
-
 	jmp START
 
-BASE_OF_STACK		equ 0x100
+%include "pm.inc"        				; 常量,宏,以及一些说明
 
+
+[SECTION .gdt]
+; GDT BEGIN
+LABEL_GDT:			descriptor 0, 		0, 				0
+LABEL_DESC_CODE32:	descriptor 0, 		0xFFFFF, 		DA_C + DA_32
+LABEL_DESC_VIDEO:	descriptor 0xB8000, 0xFFFFF, 		DA_DRW
+LABEL_DESC_DATA:	descriptor 0,		0xFFFFF,		DA_DRW | DA_32 | DA_LIMIT_4K
+; GDT END
+
+GDT_LEN         	equ $ - LABEL_GDT	; GDT长度
+GDT_PTR         	dw GDT_LEN			; GDT界限
+               		dd 0           		; GDT基地址
+
+; GDT选择子
+SELECTOR_CODE32     equ LABEL_DESC_CODE32	- LABEL_GDT
+SELECTOR_VIDEO      equ LABEL_DESC_VIDEO	- LABEL_GDT
+SELECTOR_DATA		equ LABEL_DESC_DATA		- LABEL_GDT
+; END OF [SECTION .gdt]
+
+TOP_OF_STACK_S16	equ 0x100
+
+[SECTION .s16]
+ALIGN 16
+[BITS 16]
 START:
 	mov ax, cs
 	mov ds, ax
 	mov es, ax
 	mov ss, ax
-	mov sp, BASE_OF_STACK
+	mov sp, TOP_OF_STACK_S16
 
     ; 清屏幕操作(scroll up window.)
 	mov	ax, 0600h		; AH = 6,  AL = 0h
@@ -348,8 +143,52 @@ START:
 	mov dh, 0
 	call DISP_STR
 
-	jmp	$		        ; 无限循环
+	; 初始化32位代码段描述符
+	xor eax, eax
+	mov ax, cs
+	shl eax, 4
+	; 将[SECTION .32]这个段的物理地址赋给eax
+	add eax, LABEL_SEG_CODE32
+	; 将 eax 的值分三部分赋值给 DESC_CODE32 中的响应位置.
+	; 也就是将基址赋值给 DESC_CODE32
+	mov word [LABEL_DESC_CODE32 + 2], ax
+	shr eax, 16
+	mov byte [LABEL_DESC_CODE32 + 4], al
+	mov byte [LABEL_DESC_CODE32 + 7], ah
 
+	; 为加载gdtr做准备
+	; 将 eax 寄存器清零
+	xor eax, eax
+	; 将 ds 寄存器的值移到 ax
+	mov ax, ds
+	; eax 左移四位
+	shl eax, 4
+	; 将 GDT 物理地址添加到 eax 寄存器中
+	add eax, LABEL_GDT                              ; eax <- gdt 基地址
+	; 将 eax 的值插入到 GDT_PTR 的基址属性中
+
+	mov dword [GDT_PTR + 2], eax    ; [GDT_PTR + 2] <- 基地址
+
+	; 加载gdtr
+	lgdt [GDT_PTR]
+
+	; 关中断
+	cli
+
+	; 打开地址线a20
+	in al, 0x92
+	; 这里是否是需要更改位 00000001b
+	or al, 00000010b
+	out 0x92, al
+
+	; 准备切换到保护模式
+	mov eax, cr0
+	or eax, 1
+	mov cr0, eax
+
+	; 真正进入保护模式
+	jmp dword SELECTOR_CODE32:0             ; 执行这一句会把SELECT_CODE32
+											; 装入CS,并跳转到SELECTOR_CODE32:0
 
 MESSAGE_LENGTH		equ 11
 BOOT_MESSAGE:		db "hello world"
@@ -367,470 +206,336 @@ DISP_STR:
 	mov dl, 0
 	int 10h
 	ret
+; END OF [SECTION .s16]
+
+[SECTION .s32]  ; 32位代码段,由实模式跳入
+ALIGN 32
+[BITS 32]
+LABEL_SEG_CODE32:
+	mov ax, SELECTOR_DATA
+	mov ds, ax
+	mov es, ax
+	mov ss, ax
+	mov fs, ax
+
+	mov esp, TOP_OF_STACK
+
+	mov ax, SELECTOR_VIDEO
+	mov gs, ax
+
+	; ======================================================================
+	; 实现字符输出
+	; ======================================================================
+	mov ax, SELECTOR_VIDEO
+	mov gs, ax                                              ; 视频段选择子(目的)
+
+	mov edi, (80 * 10 + 0) * 2              ; 屏幕第10行,第0列
+	mov ah, 0x0c                                    ; 0000: 黑底 1100: 红字
+	mov al, 'P'
+	mov [gs:edi], ax
+	add edi, 2
+	mov al, 'P'
+	mov [gs:edi], ax
+
+	; 到此停止
+	jmp $
+
+; END OF [SECTION .s32]
+
+; 堆栈段
+[SECTION .gs]
+align 32
+LABEL_STACK:		times 512 db 0
+TOP_OF_STACK		equ $ - LABEL_STACK
+; END OF [SECTION .gs]
 ```
 
-到这一步我们就获取到了我们需要的`loader.asm`文件了。为了能够获取一个镜像文件，我们需要使用如下命令生成一个镜像文件
-
-```bash
-$ bximage
-========================================================================
-                                bximage
-                  Disk Image Creation Tool for Bochs
-          $Id: bximage.c 11315 2012-08-05 18:13:38Z vruppert $
-========================================================================
-
-Do you want to create a floppy disk image or a hard disk image?
-Please type hd or fd. [hd] fd <-- 这里选择 fd
-
-Choose the size of floppy disk image to create, in megabytes.
-Please type 0.16, 0.18, 0.32, 0.36, 0.72, 1.2, 1.44, 1.68, 1.72, or 2.88.
- [1.44] <-- 直接回车即可
-I will create a floppy image with
-  cyl=80
-  heads=2
-  sectors per track=18
-  total sectors=2880
-  total bytes=1474560
-
-What should I name the image?
-[a.img] ilinux.img <-- 输入软盘的文件名
-
-Writing: [] Done.
-
-I wrote 1474560 bytes to boot.img.
-
-The following line should appear in your bochsrc:
-  floppya: image="boot.img", status=inserted
-```
-
-好，到目前为止我们所需要的代码文件都已经编写成功来，那我们就来编译运行它们吧。
-
-首先我们创建一个`Makefile`文件，其中定义来一些命令，以及中间文件的生成规则。
-
-```makefile
-# ===================================================
-# ---------------------------------------------------
-# 变量
-# ---------------------------------------------------
-# 编译中间目录
-
-# bochs 配置文件
-BOCHS_CONFIG    = bochsrc.bxrc
-BOCHS_ARGA		= -f $(BOCHS_CONFIG)
-
-FD 				= ilinux.img
-IMG_MOUNT_PATH	= /media/floppy0/
-
-# 所需要的汇编器以及汇编参数
-ASM				= nasm
-ASM_PARA		= -i boot/include/ -f elf -f bin
-QEMU 			= qemu-system-x86_64
-
-# ===================================================
-# 目标程序以及编译的中间文件
-# ---------------------------------------------------
-ILINUX_BOOT     = target/boot/boot.bin
-ILINUX_LOADER 	= target/boot/loader.bin
-
-# ===================================================
-# 所有的功能
-# ---------------------------------------------------
-.PHONY: nop all image debug run clean
-# 默认选项（输入make但是没有子命令）
-nop:
-	@echo "init                     创建所有必须的文件夹）"
-	@echo "all                      编译所有文件，生成目标文件（二进制文件，boot.bin）"
-	@echo "image                    生成镜像文件ilinux.img"
-	@echo "debug                    打开bochs运行系统并调试"
-	@echo "run                      提示用于如何将系统安装到虚拟机中"
-	@echo "clean                    清理文件"
-
-init:
-	mkdir target/boot -p
-
-all: $(ILINUX_BOOT)
-	@echo "boot.bin 生成成功"
-
-image: $(FD) $(ILINUX_BOOT) $(ILINUX_LOADER)
-	dd if=$(ILINUX_BOOT) of=$(FD) bs=512 count=1 conv=notrunc
-	sudo mount -o loop $(FD) $(IMG_MOUNT_PATH)
-	cp $(ILINUX_LOADER) $(IMG_MOUNT_PATH)
-	sudo umount $(IMG_MOUNT_PATH)
-	@echo "ilinux.img 生成成功"
-
-
-# 打开bochs进行调试
-debug: $(ILINUX_BOOT) $(BOCHS_CONFIG)
-	bochs $(BOCHS_ARGA)
-
-run: $(FD)
-	$(QEMU) -drive file=$<,if=floppy
-
-clean:
-	rm -r target
-
-# ===================================================
-# 目标文件生成规则
-# ---------------------------------------------------
-#  软件镜像不存在时，将会自动生成
-$(FD):
-	dd if=/dev/zero of=$(FD) bs=512 count=2880
-
-$(ILINUX_BOOT): boot/boot.asm
-	$(ASM) $(ASM_PARA) $< -o $@
-$(ILINUX_LOADER): boot/loader.asm
-	$(ASM) $(ASM_PARA) $< -o $@
-```
-
-接着我们使用`make init`来创建编译后的文件存储所需要的文件夹
-
-```bash
-$ make init
-```
-
-然后使用`make all`来编译文件
-
-```bash
-$ make all
-```
-
-接着生成系统镜像
-
-```bash
-$ make image
-```
-
-此时我们使用`file`命令查看`ilinux.img`，显示信息如下
-
-```bash
-$ file ilinux.img
-boot.img: DOS/MBR boot sector, code offset 0x4a+2, OEM-ID "---XX---", root entries 224, sectors 2880 (volumes <=32 MB), sectors/FAT 9, sectors/track 18, serial number 0x0, label: "snowflake01", FAT (12 bit)
-```
-
-会发现这些信息刚好是我们定义在`fat12hdr.inc`中的信息。现在文件系统所需要的常量全部引入进来了，那我们就利用文件系统来存储文件以及加载文件吧。
-
-然后我们需要将这个文件拷贝到我们之前创建好的`ilinux.img`中，为了将`loader.bin`文件复制到`ilinux.img`中，首先我们将`ilinux.img`挂载到我们系统上
-
-这个时候我们的`loader.bin`文件已经被复制到`ilinux.img`中了，为了验证这一点我们使用`hexdump`命令来查看`ilinux.img`中的内容，由于根目录区从第19扇区开始，每个扇区512字节，所以第一个字节位于偏移19*512=9728=0x2600。
-
-```bash
-$ hexdump -C -n 64 -s 0x2600 ilinux.img
-00002600  4c 4f 41 44 45 52 20 20  42 49 4e 20 00 00 00 00  |LOADER  BIN ....|
-00002610  00 00 00 00 00 00 ef 78  8c 52 03 00 0f 00 00 00  |.......x.R......|
-```
-
-我们发现上面有一个`LOADER  BIN`字符串，说明我们的文件被复制到了该`img`中。
-
-现在我们运行代码，看能否成功的加载到`loader.bin`文件。
-
-```bash
-$ make run
-```
-
-![image-20210413103946116](https://gitee.com/wei_manzhou/blog_picture/raw/master/20210413103947.png)
-
-能看到`founded`，说明我们成功的找到`loader.bin`文件啦。也就说明我们的文件系统成功的应用成功。
-
-既然已经能够找到`loader.bin`文件了，下一步我们想要把该文件加载到内存中并运行它。下面我们修改`boot.asm`文件，修改成如下：
-
-```assembly
-; define _BOOT_DEBUG_
-%ifdef _BOOT_DEBUG_
-        org 0x0100                                      ; 调试状态，做成 .com 文件，可调试
-%else
-        org 0x7c00                                      ; Boot 状态，BIOS将把 bootector
-                                                        ; 加载到 0:7c00 处并开始执行
-%endif
-
-jmp short LABEL_START
-nop
-
-%include "fat12hdr.inc"
-%include "pm.inc"
-
-LABEL_START:
-    mov ax, cs
-    mov ds, ax
-    mov	es, ax
-    mov ss, ax
-    mov sp, STACK_BASE
-
-    ; 清屏幕操作(scroll up window.)
-	mov	ax, 0600h		; AH = 6,  AL = 0h
-	mov	bx, 0700h		; 属性被用来在窗口底部写入空白行(BL = 07h)
-	mov	cx, 0			; 屏幕左上角: (0, 0)
-	mov	dx, 184fh		; 屏幕右下角: (80, 50)
-	int	10h				; int 10h
-
-	mov	dh, 0			; "booting.."
-	call FUN_DISP_STR	; 调用显示字符串函数
-
-    ; 进行磁盘复位
-    xor ah, ah
-    int 13h
-
-FUN_LOAD_LOADER_FILE:
-    ; 下面在A盘的根目录寻找loader.bin
-    mov word [W_SECTOR_NO], FAT12_SECTOR_NUM_OF_ROOT_DIR
-LABEL_SEARCH_IN_ROOT_DIR_BEGIN:
-    cmp word [W_ROOT_DIR_SIZE_FOR_LOOP], 0  ; 判断根目录区是否已经读完,
-    jz LABEL_NO_LOADERBIN                   ; 如果读完表示没有找到loader.bin
-    dec word [W_ROOT_DIR_SIZE_FOR_LOOP]
-
-
-	; 从第 ax 个sector开始，将 cl 个sector读入es:bx中
-    mov ax, LOADER_FILE_BASE				;
-    mov es, ax								; 设置缓冲区段地址 
-    mov bx, LOADER_FILE_OFFSET				; 设置缓冲区偏移地址
-    mov ax, [W_SECTOR_NO]					; 设置从第 ax 个扇区读取
-    mov cl, 1								; 读取扇区的个数
-    call FUN_READ_SECTOR					; 调用读取扇区
-
-	mov si, LOADER_FILE_NAME                ; ds:si -> "LOADER  BIN"
-    mov di, LOADER_FILE_OFFSET              ; es:di -> BaseOfLoader:0100 = BaseOfLoader*10h+100
-
-	cld
-   	mov dx, 10h
-
-LABEL_SEARCH_FOR_LOADERBIN:
-    cmp dx, 0
-
-    jz LABEL_GOTO_NEXT_SECTOR_IN_ROOT_DIR
-    dec dx
-    mov cx, 11
-LABEL_CMP_FILENAME:
-    cmp cx, 0
-    jz LABEL_FILENAME_FOUND
-    dec cx
-    lodsb
-    cmp al, byte [es:di]
-    jz LABEL_GO_ON
-    jmp LABEL_DIFFERENT
-
-LABEL_GO_ON:
-    inc di
-    jmp LABEL_CMP_FILENAME
-
-LABEL_DIFFERENT:
-    and di, 0xFFE0
-    add di, 0x20
-    mov si, LOADER_FILE_NAME
-    jmp LABEL_SEARCH_FOR_LOADERBIN
-
-LABEL_GOTO_NEXT_SECTOR_IN_ROOT_DIR:
-    add word [W_SECTOR_NO], 1
-    jmp LABEL_SEARCH_IN_ROOT_DIR_BEGIN
-
-LABEL_NO_LOADERBIN:
-    mov dh, 2
-    call FUN_DISP_STR
-
-%ifdef _BOOT_DEBUG_
-    mov ax, 0x4c00
-    int 21h
-%else
-    jmp $
-%endif
-
-LABEL_FILENAME_FOUND:
-    mov	ax, FAT12_ROOT_DIR_SECTORS
-	and	di, 0FFE0h		                    ; di -> 当前条目的开始
-	add	di, 01Ah		                    ; di -> 首 SECTOR
-	mov	cx, word [es:di]
-	push cx			                        ; 保存此 SECTOR 在 FAT 中的序号
-	add	cx, ax
-	add	cx, FAT12_DELTA_SECTOR_NO	        ; cl 为 LOADER.bin 的起始扇区号
-	mov	ax, LOADER_FILE_BASE
-	mov	es, ax			                    ; es <- LOADER_FILE_BASE
-	mov	bx, LOADER_FILE_OFFSET	            ; bx <- LOADER_FILE_OFFSET
-                                            ; es:bx = LOADER_FILE_BASE:LOADER_FILE_OFFSET
-	mov	ax, cx			                    ; ax <- SECTOR 号
-
-LABEL_GOON_LOADING_FILE:
-	push ax			                        ; 
-	push bx			                        ; 
-	mov	ah, 0Eh			                    ; 
-	mov	al, '.'			                    ; 
-	mov	bl, 0Fh			                    ; 
-	int	10h			                        ; 
-	pop	bx			                        ; 
-	pop	ax			                        ; 每读取一个扇区就在 booting 后面输出一个 . 
-
-	mov	cl, 1
-	call FUN_READ_SECTOR
-	pop	ax			                        ; 取出此 SECTOR 在 FAT 中的序号
-	call FUN_GET_FAT_ENTRY
-	cmp	ax, 0FFFh
-	jz	LABEL_FILE_LOADED
-	push ax			                        ; 保存此 SECTOR 在 FAT 中的序号
-	mov	dx, FAT12_ROOT_DIR_SECTORS
-	add	ax, dx
-	add	ax, FAT12_DELTA_SECTOR_NO
-	add	bx, [BPB_BytsPerSec]
-	jmp	LABEL_GOON_LOADING_FILE
-LABEL_FILE_LOADED:
-	; 文件找到并加载之后，跳转到这个位置运行
-	jmp	LOADER_FILE_BASE:LOADER_FILE_OFFSET	; 
-
-
-; ============================================================================
-; 
-; description:	根据 fat 将内容加载到内存中
-; ============================================================================
-FUN_GET_FAT_ENTRY:
-	push es
-	push bx
-	push ax
-	mov	ax, LOADER_FILE_BASE	            ; --
-	sub	ax, 0100h		                    ; 在 LOADER_FILE_BASE 后面留出 4KB 空间
-	mov	es, ax			                    ; 用于存放 FAT
-	pop	ax
-	mov	byte [B_ODD], 0
-	mov	bx, 3
-	mul	bx			                        ; dx:ax = ax * 3
-	mov	bx, 2
-	div	bx			                        ; dx:ax / 2  ==>  ax <- 商, dx <- 余数
-	cmp	dx, 0
-	jz LABEL_EVEN
-	mov	byte [B_ODD], 1
-LABEL_EVEN:                                 ; 偶数
-	xor	dx, dx			                    ; 现在 ax 是 FAT ENTRY 在 FAT 中的偏移量
-	mov	bx, [BPB_BytsPerSec]
-	div	bx			                        ; dx:ax / BPB_BytsPerSec  ==>	ax <- 商
-	push dx
-	mov	bx, 0			                    ; bx <- 0 所以 es:bx = (LOADER_FILE_BASE - 100):00
-	add	ax, FAT12_SECTOR_NO_OF_FAT1	        ; 此句执行之后的 ax 就是 FAT ENTRY 所在的扇区号
-	mov	cl, 2
-	call FUN_READ_SECTOR		            ; 读取 FAT ENTRY 所在的扇区，一次读两个
-	pop	dx
-	add	bx, dx
-	mov	ax, [es:bx]
-	cmp	byte [B_ODD], 1
-	jnz	LABEL_EVEN_2
-	shr	ax, 4
-LABEL_EVEN_2:
-	and	ax, 0FFFh
-
-LABEL_GET_FAT_ENRY_OK:
-
-	pop	bx
-	pop	es
-	ret
-
-; ============================================================================
-; 
-; description:	从第 ax 个sector开始，将 el 个sector读入es:bx中
-; 
-; params:		al	读取的扇区数目
-;				ch	柱面号
-;				cl	扇区号
-;				dh	磁头号
-;				dl	驱动号(0表示A盘)
-;				es:bx	数据缓冲区
-;
-; return:		cf	错误会被置位，成功会被清零
-;				ah	成功会被置0
-;				al 传输的扇区数目
-; notes:		每一个扇区有 512 字节
-;
-; 2 * 80 * 18 * 512 = 1.44MB
-;
-; BPB_SecPerTrk
-;
-; 我们能够取得要读取的数据的扇区号：ax，
-; cl = ax % BPB_SecPerTrk
-; ch = (ax / BPB_SecPerTrk) >> 1
-; dh = (ax / BPB_SecPerTrk) & 1
-; ============================================================================
-FUN_READ_SECTOR:          		
-    push cx						; 保存要读取的扇区数目
-    push bx                 	; 保存bx
-    mov bl, [BPB_SecPerTrk]		; b1: 除数
-    div bl                  	; al = ax / BPB_SecPerTrk; ah = ax % BPB_SecPerTrk(这里我们取到余数，也就是扇区号)
-    inc ah                  	; 由于扇区是从1开始计数的，所以要给ah加1
-    mov cl, ah              	; cl <- 起始扇区号
-    mov dh, al              	; dh <- al
-	and dh, 1					; dh & 1 = 磁头号
-    shr al, 1               	; al >> 1 (其实是 y / BPB_NUM_HEADS),这里
-                              	; BPB_NUM_HEADS=2
-    mov ch, al              	; ch <- 柱面号
-    pop bx                  	; 恢复bx
-    ; 至此,*柱面号,起始扇区,磁头号*全部得到
-    mov dl, [BS_DrvNum]    	; 驱动器号(0表示A盘)
-
-    pop ax						; 取出要读取的扇区数目，我们只需要al即可，不过下一步的mov指令能够设置ah
-								; 读 al 个扇区
-.GO_ON_READING:
-    mov ah, 2         			; 读
-    int 13h
-    jc .GO_ON_READING			; 如果读取错误,CF会被置1,这时不停的读,直到
-								; 正确为止
-    ret
-
-FUN_DISP_STR:
-    mov ax, MESSAGE_LENGTH
-    mul dh
-    add ax, BOOT_MESSAGE
-    mov bp, ax
-    mov ax, ds
-	mov	es, ax
-    mov cx, MESSAGE_LENGTH
-    mov ax, 0x1301
-    mov bx, 0x0007
-    mov dl, 0
-    int 10h
-    ret
-
-; 为简化代码,下面每个字符串的长度均为MESSAGE_LENGTH
-MESSAGE_LENGTH	         		equ 9
-BOOT_MESSAGE            		db "booting.."
-MESSAGE1                        db "ready...."
-MESSAGE2                        db "no loader"
-MESSAGE3						db "founded.."
-MESSAGE4						db "loaded..."
-
-; ============================================================================
-; time n m
-;       n: 重复多少次
-;       m: 重复的代码
-;
-; $      : 当前地址
-; $$ : 代表上一个代码的地址减去起始地址
-; ============================================================================
-times 510-($-$$) db 0   ; 填充 0
-dw 0xaa55                               ; 可引导扇区标志,必须是 0xaa55,不然bios无法识别
-```
-
-接着我们使用`make`来编译运行它
-
-```bash
-$ # 清楚上一个版本
-$ make clean
-$ # 创建所需要的文件夹
-$ make init
-$ # 编译文件
-$ make all
-$ # 生成镜像文件
-$ make image
-$ # 运行
-$ make run
-```
-
-也可以用一条命令替换上面的
+下面我们来运行这个代码
 
 ```bash
 $ make clean init all image run
 ```
 
-成功运行
+可以发现屏幕成功的打印来一个红色的`P`字符，这表示我们成功的进入到来保护模式
 
-![image-20210413135813571](https://gitee.com/wei_manzhou/blog_picture/raw/master/20210413135820.png)
+![image-20210413150004538](https://gitee.com/wei_manzhou/blog_picture/raw/master/20210413150006.png)
 
-说明我们成功的利用`fat12`文件系统存储文件，以及利用汇编找到该文件，并加载其到内存，然后成功的运行来该文件。
+可以看到，整个代码主要是四部分，也就是四个`section`，分别为：`.gdt`，`.s16`，`s32`，`.gs`。
 
-## 参考文档
+首先我们看一下`.gdt section`。
 
-- [INT 13h / AH = 02h](http://www.ablmcc.edu.hk/~scy/CIT/8086_bios_and_dos_interrupts.htm#int13h_02h)：读取扇区中断
-- [INT 13h / AH = 00h](http://www.ablmcc.edu.hk/~scy/CIT/8086_bios_and_dos_interrupts.htm#int13h_00h)：磁盘复位系统中断
-- [INT 10h / AH = 06h](http://www.ablmcc.edu.hk/~scy/CIT/8086_bios_and_dos_interrupts.htm#int10h_06h)：滚屏中断，用来清屏
+```assembly
+[SECTION .gdt]
+; GDT BEGIN
+LABEL_GDT:			descriptor 0, 		0, 				0
+LABEL_DESC_CODE32:	descriptor 0, 		0xFFFFF, 		DA_C + DA_32
+LABEL_DESC_VIDEO:	descriptor 0xB8000, 0xFFFFF, 		DA_DRW
+LABEL_DESC_DATA:	descriptor 0,		0xFFFFF,		DA_DRW | DA_32 | DA_LIMIT_4K
+; GDT END
 
+GDT_LEN         	equ $ - LABEL_GDT	; GDT长度
+GDT_PTR         	dw GDT_LEN			; GDT界限
+               		dd 0           		; GDT基地址
+
+; GDT选择子
+SELECTOR_CODE32     equ LABEL_DESC_CODE32	- LABEL_GDT
+SELECTOR_VIDEO      equ LABEL_DESC_VIDEO	- LABEL_GDT
+SELECTOR_DATA		equ LABEL_DESC_DATA		- LABEL_GDT
+; END OF [SECTION .gdt]
+```
+
+最开头我们开到定义了一个标签
+
+```assembly
+LABEL_GDT:				descriptor 0, 0, 0              ; 空描述符
+```
+
+不过后面这个`descriptor`是什么呢？这其实是一个宏，定义在`pm.inc`文件中。
+
+```assembly
+; 描述符
+; usage: desciptor base, limit, attr
+; 	base:  dd
+;   limit: dd(low 20 bits available)
+;   attr:  dw(lower 4 bits of higher byte are always 0)
+%macro descriptor 3
+        dw %2 & 0xFFFF          ; 段界限 1 (2 字节)
+        dw %1 & 0xFFFF          ; 段基址 1 (2 字节)
+        db (%1 >> 16) & 0xFF	; 段基址 2 (1 字节)
+        dw ((%2 >> 8) & 0x0F00) | (%3 & 0xF0FF)
+                                ; 属性1 + 段界限2 + 属性2	(2 字节)
+        db (%1 >> 24) & 0xFF	; 段基址 3 (1 字节)
+%endmacro ; 共8字节
+```
+
+看到这里又多出来了奇奇怪怪的东西，我们先忽略宏的内容，可以看到宏的整个结构如下
+
+```assembly
+; macro BEGIN
+%macro <macro_name> <param_count>
+        %1
+        %2
+        %3
+        ...<内容>
+%endmacro
+; macro END
+```
+
+首先是一个`%macro`标志，然后跟上宏的名词接着为宏的参数个数，最后以`%endmacro`结束宏的定义。那么我们怎么能够在宏内容里面取到参数呢，可以通过`%n`的格式取到第`n`个参数。
+
+在简要介绍完宏的结构后，我们再来深入一下`GDT`，也就是如上宏的内部结构。
+
+`GDT`，也就是`Global Descriptor Table`，全局描述符表。在实模式下，16位的寄存器需要使用`段:偏移`的形式来达到，1MB的寻址空间，在高的内存就无法寻址到了。而保护模式下，我们借助`GDT`实现了，一个寄存器就可以达到4GB的寻址，我们通过维护一个结构，也就是`GDT`（实际上还有`LDT`），然后让`寄存器`指向这个结构，这个结构定义了段的：
+
+- 起始地址
+- 界限
+- 属性（访问权限等）
+
+每一个`GDT`的表项也有一个专门的名词，叫做描述符（descriptor）。
+
+接下来我们解释描述符。首先我们看一下描述符的结构。
+
+![GDT](https://gitee.com/wei_manzhou/blog_picture/raw/master/20210331160255.png)
+
+看着结构很复杂，不过我们可以注意到`段基址`和`段界限`出现了好几次。寻址模式仍然是`段基址:段界限`的方式。由于历史的原因，他们被拆开来放。剩下的都是一些属性值，我们用到的时候再解释他们。
+
+这里我们再看`descriptor`这个宏，这个宏使用参数传入的方法，将`基址`、`界限`、`属性`这个三个参数赋值到相应的位置处。
+
+好，现在我们回到`[SECTION .gdt]`这里，可以看到一共定义了三个描述符，为方便起见，我们分别称他们为DESC_CODE32，DESC_VIDEO，DESC_GDT段。现在，我们来看看DESC_VIDEO，它的基址是0xB8000。顾名思义，这个描述符指向的正是显存。
+
+现在我们已经知道了，GDT中的每一个描述符定义一个段，那么，CS，DS等寄存器怎么跟如何和对应的段对应起来的呢？你可能已经注意到了，在段[SECTION .32]中有两句代码是这样的：
+
+```assembly
+        mov ax, SELECTOR_VIDEO
+        mov gs, ax                                              ; 视频段选择子(目的)
+```
+
+看上去，段寄存GS的值变成了SELECTOR_VIDEO，我们可以在上文中可以看到，SELECTOR_VIDEO是这样定义的：
+
+```assembly
+SELECTOR_VIDEO      equ LABEL_DESC_VIDEO	- LABEL_GDT
+```
+
+直观的看，它是LABEL_DESC_VIDEO相对于LABEL_GDT的偏移。实际上，它有一个专门的名称，叫做选择字（SELECTOR），他不是一个偏移，而是稍微复杂一点，它的结构如下图所示。
+
+![工作簿1](https://gitee.com/wei_manzhou/blog_picture/raw/master/20210331151343.png)
+
+不难理解，当TI和RPL都为零时，选择子就变成了对应描述符相对于基址的偏移，就好像我们程序中那样。
+
+在程序快要结束的位置，我们可以看到这样一行。
+
+```assembly
+        mov [gs:edi], ax
+```
+
+这里，我们就明白了，GS的值就是SELECTOR_VIDEO，它指示对应显存的描述符DESC_VIDEO，这条指令将把AX的值写入显存中偏移位EDI的位置。
+
+可能你注意到了，上图中“段:偏移”形式的逻辑地址（Logical Addess）经过段机制转化成“线性地址”（Linear Address），而不是“物理地址”（Physical Addres）， 其中的原因我们以后会提到。在上面的程序中，线性地址就是物理地址。另外，包含描述符的，不仅可以是GDT，也可以是LDT。
+
+接着我们来讲解`[SECTION .s16]`，在这段代码中，我们将实现从实模式到保护模式的转换，我们首先看一下
+
+```assembly
+        mov ax, cs
+        mov ds, ax
+        mov es, ax
+        mov ss, ax
+        mov sp, 0x0100
+```
+
+这里主要是初始化一些寄存器，等价的C代码如下
+
+```c
+ss = es = ds = cs;
+sp = 0x0100
+```
+
+设置`ss`、`es`、`ds`的值为`cs`寄存器，栈顶为0x0100.
+
+接着我们看到初始化32位代码段描述符这一段
+
+```assembly
+        ; 初始化32位代码段描述符
+        xor eax, eax
+        mov ax, cs
+        shl eax, 4
+        ; 将[SECTION .32]这个段的物理地址赋给eax
+        add eax, LABEL_SEG_CODE32
+        ; 将 eax 的值分三部分赋值给 DESC_CODE32 中的响应位置.
+        ; 也就是将基址赋值给 DESC_CODE32
+        mov word [LABEL_DESC_CODE32 + 2], ax
+        shr eax, 16
+        mov byte [LABEL_DESC_CODE32 + 4], al
+        mov byte [LABEL_DESC_CODE32 + 7], ah
+```
+
+这里有些人可能会疑惑，为什么我们之前使用宏来初始化DESC_CODE32，这里为什么还要初始化呢，这是因为采用宏的方式它的基地址没有设置正确，从代码来看，基地址不是0，但是宏是0，所以这里我们要来修改基地址。首先，我们使用`xor`异或操作操作清空`eax`寄存器（32位的ax寄存器），然后将代码段寄存器`cs`的值复制到`ax`寄存器中，这个时候为了计算出线性地址，使用`shl`左移操作，将`eax`的值左移4位，然后加上`[SECTION .32]`的偏移值
+
+```assembly
+        ; 初始化32位代码段描述符
+        xor eax, eax
+        mov ax, cs
+        shl eax, 4
+        ; 将[SECTION .32]这个段的物理地址赋给eax
+        add eax, LABEL_SEG_CODE32
+```
+
+在这一步完成后，`eax`的值为`[SECTION .32]`代码的线性地址，根据`descriptor`的结构，我们首先将`eax`的低16位，赋值到`[LABEL_DESC_CODE32 + 2]`，也就是
+
+![image-20210331155028387](https://gitee.com/wei_manzhou/blog_picture/raw/master/20210331155032.png)
+
+接着，使用`shr`右移操作符将`eax`寄存器右移16位，然后将低八位赋值给`[LABEL_DESC_CODE32 + 4]`，也就是
+
+![image-20210331155251063](https://gitee.com/wei_manzhou/blog_picture/raw/master/20210331155252.png)
+
+接下来就剩下最后一段代码了
+
+```assembly
+        mov byte [LABEL_DESC_CODE32 + 7], ah
+```
+
+将`ah`，也就是`ax`的高八位赋值给`[LABEL_DESC_CODE32 + 7]`处，也就是
+
+![image-20210331155357742](https://gitee.com/wei_manzhou/blog_picture/raw/master/20210331155359.png)
+
+在完成32位代码段的初始化后，我们开始为加载`gdtr`做准备
+
+```assembly
+        ; 为加载gdtr做准备
+        ; 将 eax 寄存器清零
+        xor eax, eax
+        ; 将 ds 寄存器的值移到 ax
+        mov ax, ds
+        ; eax 左移四位
+        shl eax, 4
+        ; 将 GDT 物理地址添加到 eax 寄存器中
+        add eax, LABEL_GDT                              ; eax <- gdt 基地址
+        ; 将 eax 的值插入到 GDT_PTR 的基址属性中
+
+        mov dword [GDT_PTR + 2], eax    ; [GDT_PTR + 2] <- 基地址
+```
+
+首先仍然是通过`xor`异或操作将`eax`寄存器清0，然后将`ds`寄存器的值复制到`ax`寄存器中，然后通过`shl`左移操作将`eax`寄存器左移4位，接着使用`add`指令加上将`LABEL_GDT`偏移值，到这一步，完成了`GDT`全局描述符表寄存器的地址初始化，然后将`eax`寄存器的值复制到`GDT_PTR`中，也就是如下图所示。
+
+![GDT2_32](https://gitee.com/wei_manzhou/blog_picture/raw/master/20210331162115.png)
+
+值准备好`GDT`和`GDTR`后，下一步我们开始准备跳转到32位代码处了。
+
+```assembly
+        ; 加载gdtr
+        lgdt [GDT_PTR]
+
+        ; 关中断
+        cli
+
+        ; 打开地址线a20
+        in al, 0x92
+        ; 这里是否是需要更改位 00000001b
+        or al, 00000010b
+        out 0x92, al
+
+        ; 准备切换到保护模式
+        mov eax, cr0
+        or eax, 1
+        mov cr0, eax
+
+        ; 真正进入保护模式
+        jmp dword SELECTOR_CODE32:0             ; 执行这一句会把SELECT_CODE32
+                                                ; 装入CS,并跳转到
+```
+
+整个过程为如下：
+
+1. 使用`lgdt`指令将`[GDT_PTR]`的内容赋值给`gdt`寄存器
+2. 使用`cli`关闭中断
+3. 将`a20`地址线的低2位置1
+4. 将`cr0`寄存器的最低位置1
+5. 使用`jmp`指令跳转到32位代码处
+
+到这部为止，我们已经完成了从实模式到保护模式的切换。
+
+接着我们来解释最后一段的代码，也就是`[SECTION .s32]`
+
+```assembly
+[SECTION .s32]  ; 32位代码段,由实模式跳入
+[BITS 32]
+LABEL_SEG_CODE32:
+        ; ======================================================================
+        ; 实现字符输出
+        ; ======================================================================
+        mov ax, SELECTOR_VIDEO
+        mov gs, ax                              ; 视频段选择子(目的)
+
+        mov edi, (80 * 10 + 0) * 2              ; 屏幕第10行,第0列
+        mov ah, 0x0c                            ; 0000: 黑底 1100: 红字
+        mov al, 'P'
+        mov [gs:edi], ax
+        add edi, 2
+        mov al, 'P'
+        mov [gs:edi], ax
+
+
+        ; 到此停止
+        jmp $
+```
+
+整个功能是向显存中写入黑底红字`P`字符，下面我们来解释每一句代码。
+
+```assembly
+        mov ax, SELECTOR_VIDEO
+        mov gs, ax                                              ; 视频段选择子(目的)
+```
+
+该操作在上面已经讲过略过去。
+
+在解释下面这段之前，我们先来讲解一下对显存的操作。
+
+```assembly
+        mov edi, (80 * 10 + 0) * 2              ; 屏幕第10行,第0列
+        mov ah, 0x0c                            ; 0000: 黑底 1100: 红字
+        mov al, 'P'
+        mov [gs:edi], ax
+```
+
+我们已经完成来对新添加的代码的解释。
+
+下面我们总结一些这一个实验，在这个实验中我们成功的实现来从实模式到保护模式的切换，并成功的操作显存向屏幕输出了字符。
