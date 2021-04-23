@@ -37,7 +37,7 @@ FORWARD _PROTOTYPE( void test_soft_int, (void) );
 
 /* 中断门信息表 */
 struct gate_desc_s int_gate_table[] = {
-        /* **************************** 异常 ****************************** */
+        /* ************************** exception *************************** */
         { INT_VECTOR_DIVIDE,		divide_error,			KERNEL_PRIVILEGE },
         { INT_VECTOR_DEBUG,			single_step_exception,	KERNEL_PRIVILEGE },
         { INT_VECTOR_NMI,			nmi,					KERNEL_PRIVILEGE },
@@ -54,7 +54,7 @@ struct gate_desc_s int_gate_table[] = {
         { INT_VECTOR_PROTECTION,	general_protection,		KERNEL_PRIVILEGE },
         { INT_VECTOR_PAGE_FAULT,	page_fault,				KERNEL_PRIVILEGE },
         { INT_VECTOR_COPROC_ERR,	copr_error,				KERNEL_PRIVILEGE },
-        /* ************************** 硬件中断 **************************** */
+        /* ************************** interrupt *************************** */
         { INT_VECTOR_IRQ0 + 0,		hwint00,				KERNEL_PRIVILEGE },
         { INT_VECTOR_IRQ0 + 1,		hwint01,				KERNEL_PRIVILEGE },
         { INT_VECTOR_IRQ0 + 2,		hwint02,				KERNEL_PRIVILEGE },
@@ -71,10 +71,8 @@ struct gate_desc_s int_gate_table[] = {
         { INT_VECTOR_IRQ8 + 5,		hwint13,				KERNEL_PRIVILEGE },
         { INT_VECTOR_IRQ8 + 6,		hwint14,				KERNEL_PRIVILEGE },
         { INT_VECTOR_IRQ8 + 7,		hwint15,				KERNEL_PRIVILEGE },
-        /* ************************** 软件异常 **************************** */
+        /* ************************ soft interrupt ************************ */
         { 48,                       test_soft_int,          KERNEL_PRIVILEGE }
-        // { INT_VECTOR_LEVEL0,		level0_sys_call,		TASK_PRIVILEGE   },		/* 提供给系统任务的系统调用：提权 */
-        // { INT_VECTOR_SYS_CALL,		ilinux_386_sys_call,	USER_PRIVILEGE   },		/* 提供给系统任务的系统调用：提权 */
 };
 
 PRIVATE void test_soft_int(void) {
@@ -130,19 +128,6 @@ PUBLIC void init_protect(void) {
         );
     }
 
-    // 为每个进程分配一个唯一的 LTD
-    process_t* process = BEG_PROC_ADDR;
-    int ldt_index = LDT_FIRST_INDEX;
-    for (; process < END_PROC_ADDR; process++, ldt_index++) {
-        memset(process, 0, sizeof(process_t));
-        init_segment_desc(
-            &gdt[ldt_index],
-            vir2phys(process->ldt),
-            sizeof(process->ldt) - 1,
-            DA_LDT
-        );
-        process->ldt_sel = ldt_index * DESCRIPTOR_SIZE;
-    }
 }
 
 /*************************************************************************

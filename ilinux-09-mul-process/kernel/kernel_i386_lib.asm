@@ -46,10 +46,9 @@ low_print:
 	; 如果不是换行符，也不是\0，那我们认为是一个可以打印的字符
 	mov [gs:edi], ax					; 将字符显示
 	add edi, 2							; 调整偏移量
-
+.3:
 	cmp edi, 4000						; 判断字符是否超出屏幕，如果是进行滚屏
 	jae .scroll_screen
-
 .2:
 	call FUN_SET_CURSOR_POSITION
 	jmp .1
@@ -58,7 +57,7 @@ low_print:
 	jmp .2
 .print_nl:
 	call FUN_PRINT_NL					; 打印换行符，也就是换行
-	jmp .2
+	jmp .3
 .print_end:
 	mov dword [display_position], edi	; 打印完毕更新显示
 
@@ -127,7 +126,7 @@ FUN_SET_CURSOR_POSITION:
 
 	mov eax, edi								; 将显示位置暂存到 eax 中
 	mov bx, ax
-	shr bx, 1									; 由于每一个字符都要两个字节，而显示位置只需要一个字节
+	; shr bx, 1									; 由于每一个字符都要两个字节，而显示位置只需要一个字节
 												; 存储的形式采取的是两字节形式，所以这个地方需要计算出下一个光标位置
 
 	mov dx, VIDEO_INDEX_PORT
@@ -136,15 +135,15 @@ FUN_SET_CURSOR_POSITION:
 
 	mov dx, VIDEO_DATA_PORT
 	mov al, bh
-	out dx, al
-	
+	out dx, al									; [VIDEO_DATA_PORT] = bh
+
 	mov dx, VIDEO_INDEX_PORT
 	mov al, CURSOR_POS_LOW8_INDEX
 	out dx, al
 
 	mov dx, VIDEO_DATA_PORT
 	mov al, bl
-	out dx, al
+	out dx, al									; [VIDEO_DATA_PORT] = bl
 
 	pop dx
 	pop bx

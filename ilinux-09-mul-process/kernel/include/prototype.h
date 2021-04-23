@@ -72,7 +72,6 @@ _PROTOTYPE(void hwint15, (void));
 	> kernel_386lib.asm
 **************************************************************************/
 _PROTOTYPE(void low_print, (char *_str, u8_t color));
-// _PROTOTYPE(void low_print, (char *_str));
 _PROTOTYPE(u8_t in_byte, (port_t port));
 _PROTOTYPE(void out_byte, (port_t port, U8_t value));
 _PROTOTYPE(void interrupt_lock, (void));
@@ -113,5 +112,10 @@ _PROTOTYPE(void put_irq_handler, (int irq, irq_handler_t handler));
 **************************************************************************/
 _PROTOTYPE(int k_printf, (const char *fmt, ...));
 _PROTOTYPE(void panic, (const char *msg, int error_no));
+
+/*************************************************************************
+	> misc.c
+**************************************************************************/
+_PROTOTYPE(void init_process_table, (void));
 
 #endif //ILINUX_PROTOTYPE_H
